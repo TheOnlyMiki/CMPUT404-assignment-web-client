@@ -36,46 +36,189 @@ class HTTPClient(object):
     #def get_host_port(self,url):
 
     def connect(self, host, port):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((host, port))
-        return None
+        
+        # Try to connect to the giving host and port
+        try:
+            self.socket = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
+            self.socket.connect( ( host, port ) )
+            
+        # If the connection is failed, tell to stdout and exit the process
+        except:
+            print( f"Failed to connect the host: {host} - port: {port}" )
+            sys.exit( 1 )
+
+        print( f"Connected to the host: {host} - port: {port}" )
+        
+        return host, port
 
     def get_code(self, data):
-        return None
+        return int( data.split()[ 1 ] )
 
     def get_headers(self,data):
         return None
 
     def get_body(self, data):
-        return None
+        return data.split( "\r\n\r\n" )[ 1 ]
     
     def sendall(self, data):
-        self.socket.sendall(data.encode('utf-8'))
+        
+        # Try to send
+        try:
+            self.socket.sendall( data.encode( 'utf-8' ) )
+            
+        # If the send is failed, tell the stdout and close the connection, then exit the process
+        except:
+            print( "Failed to send" )
+            self.close()
+            sys.exit( 1 )
         
     def close(self):
-        self.socket.close()
+        
+        # Try to close
+        try:
+            self.socket.close()
+            
+        # If close is failed, exit the process, maybe the parent process doing recycle will auto close the connection? 
+        except:
+            print( "Failed to close" )
+            sys.exit( 1 )
 
     # read everything from the socket
     def recvall(self, sock):
         buffer = bytearray()
         done = False
         while not done:
-            part = sock.recv(1024)
-            if (part):
-                buffer.extend(part)
-            else:
-                done = not part
-        return buffer.decode('utf-8')
+            
+            # Try to recv
+            try:
+                part = sock.recv( 1024 )
+                if ( part ): buffer.extend( part )
+                else: done = not part
+                    
+            # If the recv is failed, tell the stdout and close the connection, then exit the process
+            except:
+                print( "Failed to recv" )
+                self.close()
+                sys.exit( 1 )
+                
+        return buffer.decode( 'utf-8' )
 
     def GET(self, url, args=None):
         code = 500
         body = ""
-        return HTTPResponse(code, body)
+
+        path = ""
+        port = None
+        host = None
+
+        # Get the host and port from giving url
+        # Source: https://docs.python.org/3/library/urllib.parse.html
+        o = urllib.parse.urlparse( url )
+        
+        host = o.hostname
+        port = o.port
+        path = o.path
+
+        # Check the port and host is valid
+        # Source: https://eclass.srv.ualberta.ca/mod/forum/discuss.php?d=1821150
+        if ( port is None ): port = 80
+        if ( o is None ) or ( host is None ) or ( host == "" ):
+            print( f"Failed to get the information from URL: {url}" )
+            sys.exit( 1 )
+
+        # Check the path is invaild or empty, giving the root path
+        if ( path is None ) or ( path == "" ): path = "/"
+
+        # Connect to the host and port
+        host, port = self.connect( host, port )
+        
+        # Create a POST request of URL format
+        # Source 1: https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers
+        # Source 2: https://eclass.srv.ualberta.ca/mod/forum/discuss.php?d=1818167
+        # Source 3: https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers/Connection
+        get_request = f"GET {path} HTTP/1.1\r\n" + \
+                      f"Host: {host}\r\n" + \
+                      f"Accept: */*\r\n" + \
+                      f"Accept-Charset: utf-8\r\n" + \
+                      f"Connection: close\r\n\r\n"
+
+        print( "\n-------- GET Request --------" )
+        print( get_request )
+
+        # Send a GET request
+        self.sendall( get_request )
+
+        # Get the response of that request
+        get_response = self.recvall( self.socket )
+        
+        print( "-------- GET Response --------" )
+        print( get_response )
+
+        # Close the connection
+        self.close()
+        
+        return HTTPResponse( self.get_code( get_response ), self.get_body( get_response ) )
 
     def POST(self, url, args=None):
         code = 500
         body = ""
-        return HTTPResponse(code, body)
+
+        # Get the host and port from giving url
+        # Source: https://docs.python.org/3/library/urllib.parse.html
+        o = urllib.parse.urlparse( url )
+
+        host = o.hostname
+        port = o.port
+        path = o.path
+        url_args = ""
+
+        # Check the port and host is valid
+        # Source: https://eclass.srv.ualberta.ca/mod/forum/discuss.php?d=1821150
+        if ( port is None ): port = 80
+        if ( o is None ) or ( host is None ) or ( host == "" ):
+            print( f"Failed to get the information from URL: {url}" )
+            sys.exit( 1 )
+
+        # Check the path is invaild or empty, giving the root path
+        if ( path is None ) or ( path == "" ): path = "/"
+
+        # Check the args is giving or not, if giving, transfer from dictionary to URL parameters (From freetest.py we saw the POST(args={dictionary}))
+        # Source: https://stackoverflow.com/questions/1233539/python-dictionary-to-url-parameters
+        if ( args is None ): url_args = ""
+        else: url_args = urllib.parse.urlencode( args )
+
+        # Connect to the host and port
+        host, port = self.connect( o.hostname, o.port )
+
+        # Create a POST request of URL format
+        # Source 1: https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers
+        # Source 2: https://eclass.srv.ualberta.ca/mod/forum/discuss.php?d=1818167
+        # Source 3: https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Headers/Connection
+        post_request = f"POST {path} HTTP/1.1\r\n" + \
+                       f"Host: {host}\r\n" + \
+                       f"Accept: */*\r\n" + \
+                       f"Accept-Charset: utf-8\r\n" + \
+                       f"Content-Length: {len( url_args )}\r\n" + \
+                       f"Content-Type: application/x-www-form-urlencoded\r\n" + \
+                       f"Connection: close\r\n\r\n" + \
+                       f"{url_args}"
+
+        print( "\n-------- POST Request --------" )
+        print( post_request )
+
+        # Send a POST request
+        self.sendall( post_request )
+
+        # Get the response of that request
+        post_response = self.recvall( self.socket )
+        
+        print( "-------- POST Response --------" )
+        print( post_response )
+
+        # Close the connection
+        self.close()
+        
+        return HTTPResponse( self.get_code( post_response ), self.get_body( post_response ) )
 
     def command(self, url, command="GET", args=None):
         if (command == "POST"):
